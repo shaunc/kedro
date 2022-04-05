@@ -3,7 +3,7 @@ underlying dataset definition. It also uses `fsspec` for filesystem level operat
 """
 import operator
 from copy import deepcopy
-from typing import Any, Callable, Dict, List, Type, Union
+from typing import Any, Callable, Dict, List, Tuple, Type, Union
 from urllib.parse import urlparse
 from warnings import warn
 
@@ -241,15 +241,39 @@ class PartitionedDataSet(AbstractDataSet):
             path = path[: -len(self._filename_suffix)]
         return path
 
+    def load_partition(self, key: str) -> Tuple[str, AbstractDataSet]:
+        """This method provides a public interface to load a specific
+        partition. It returns a configured the DataSet instance, rather than
+        loading any of the data itself.
+
+        Args:
+            key (str): The ID of the partition to load
+
+        Raises:
+            DataSetError: Is raised if the partition has not previously been saved
+
+        Returns:
+            Tuple[str, AbstractDataSet]: A pair of the `partition_id`, data
+        """
+        kwargs = deepcopy(self._dataset_config)
+        matched_keys = [
+            x for x in self._list_partitions() if key in self._partition_to_path(x)
+        ]
+
+        if matched_keys:
+            matched_key = matched_keys[0]
+            # join the protocol back since PySpark may rely on it
+            kwargs[self._filepath_arg] = self._join_protocol(matched_key)
+            dataset = self._dataset_type(**kwargs)  # type: ignore
+            partition_id = self._path_to_partition(matched_key)
+            return partition_id, dataset
+        raise DataSetError(f"Partition `{key}` not found")
+
     def _load(self) -> Dict[str, Callable[[], Any]]:
         partitions = {}
 
         for partition in self._list_partitions():
-            kwargs = deepcopy(self._dataset_config)
-            # join the protocol back since PySpark may rely on it
-            kwargs[self._filepath_arg] = self._join_protocol(partition)
-            dataset = self._dataset_type(**kwargs)  # type: ignore
-            partition_id = self._path_to_partition(partition)
+            partition_id, dataset = self.load_partition(key=partition)
             partitions[partition_id] = dataset.load
 
         if not partitions:
@@ -257,20 +281,38 @@ class PartitionedDataSet(AbstractDataSet):
 
         return partitions
 
-    def _save(self, data: Dict[str, Any]) -> None:
+    def _configure_dataset_for_save(
+        self, key: str, data: Any
+    ) -> Tuple[AbstractDataSet, Any]:
+        kwargs = deepcopy(self._dataset_config)
+        partition = self._partition_to_path(key)
+        # join the protocol back since tools like PySpark may rely on it
+        kwargs[self._filepath_arg] = self._join_protocol(partition)
+        dataset = self._dataset_type(**kwargs)  # type: ignore
+        if callable(data):
+            return dataset, data()
+        return dataset, data
+
+    def save_partition(
+        self, partition_id: str, data: Union[Dict[str, Any], Any]
+    ) -> None:
+        """This exploses a public interface to save a specific partition
+
+        Args:
+            partition_id (str): The ID of the partition to save
+            data (Union[Dict[str, Any], Any]): The data to save
+        """
+        dataset, save_data = self._configure_dataset_for_save(
+            key=partition_id, data=data
+        )
+        dataset.save(save_data)
+        self._invalidate_caches()
+
+    def _save(self, data: Union[Dict[str, Any], Any]) -> None:
         if self._overwrite and self._filesystem.exists(self._normalized_path):
             self._filesystem.rm(self._normalized_path, recursive=True)
-
         for partition_id, partition_data in sorted(data.items()):
-            kwargs = deepcopy(self._dataset_config)
-            partition = self._partition_to_path(partition_id)
-            # join the protocol back since tools like PySpark may rely on it
-            kwargs[self._filepath_arg] = self._join_protocol(partition)
-            dataset = self._dataset_type(**kwargs)  # type: ignore
-            if callable(partition_data):
-                partition_data = partition_data()
-            dataset.save(partition_data)
-        self._invalidate_caches()
+            self.save_partition(partition_id, partition_data)
 
     def _describe(self) -> Dict[str, Any]:
         clean_dataset_config = (

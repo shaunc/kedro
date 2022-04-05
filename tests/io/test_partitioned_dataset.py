@@ -537,3 +537,32 @@ class TestPartitionedDataSetS3:
         assert f"path={path}" in str(pds)
         assert "dataset_type=CSVDataSet" in str(pds)
         assert "dataset_config" in str(pds)
+
+
+class TestPartitionedDatasSetExplicit:
+    @pytest.mark.parametrize("dataset", LOCAL_DATASET_DEFINITION)
+    @pytest.mark.parametrize("suffix", ["", ".csv"])
+    def test_load(self, dataset, local_csvs, suffix):
+        pds = PartitionedDataSet(str(local_csvs), dataset, filename_suffix=suffix)
+        partitions = {}
+        for partition_id in pds._list_partitions():
+            new_partition_id, data = pds.load_partition(partition_id)
+            partitions[new_partition_id] = data
+        assert partitions.keys() == pds.load().keys()
+        for (
+            key,
+            _,
+        ) in partitions.items():  # pylint: disable=unnecessary-dict-index-lookup
+            assert partitions[key].load().equals(pds.load()[key]())
+
+    @pytest.mark.parametrize("dataset", LOCAL_DATASET_DEFINITION)
+    @pytest.mark.parametrize("suffix", ["", ".csv"])
+    def test_save(self, dataset, local_csvs, suffix):
+        pds = PartitionedDataSet(str(local_csvs), dataset, filename_suffix=suffix)
+        original_data = pd.DataFrame({"foo": 42, "bar": ["a", "b", None]})
+
+        for item in ["one", "two"]:
+            partition_id = f"new/data/{item}"
+            pds.save_partition(partition_id=partition_id, data=original_data)
+            _, data = pds.load_partition(partition_id)
+            assert original_data.equals(data.load())
