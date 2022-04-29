@@ -379,6 +379,8 @@ class TestKedroSession:
     def test_default_store(
         self, fake_project, fake_session_id, caplog, mock_package_name
     ):
+        caplog.set_level(logging.DEBUG)
+
         session = KedroSession.create(mock_package_name, fake_project)
         assert isinstance(session.store, dict)
         assert session._store.__class__ is BaseSessionStore
@@ -392,7 +394,7 @@ class TestKedroSession:
         actual_log_messages = [
             rec.getMessage()
             for rec in caplog.records
-            if rec.name == STORE_LOGGER_NAME and rec.levelno == logging.INFO
+            if rec.name == STORE_LOGGER_NAME and rec.levelno == logging.DEBUG
         ]
         assert actual_log_messages == expected_log_messages
 
@@ -414,7 +416,7 @@ class TestKedroSession:
         actual_log_messages = [
             rec.getMessage()
             for rec in caplog.records
-            if rec.name == STORE_LOGGER_NAME and rec.levelno == logging.INFO
+            if rec.name == STORE_LOGGER_NAME and rec.levelno == logging.DEBUG
         ]
         assert not actual_log_messages
 
@@ -491,6 +493,8 @@ class TestKedroSession:
         """Test that git information is not added to the session store
         if call to git fails
         """
+        caplog.set_level(logging.DEBUG)
+
         mocker.patch("subprocess.check_output", side_effect=exception)
         session = KedroSession.create(mock_package_name, fake_project)
         assert "git" not in session.store
@@ -499,7 +503,7 @@ class TestKedroSession:
         actual_log_messages = [
             rec.getMessage()
             for rec in caplog.records
-            if rec.name == SESSION_LOGGER_NAME and rec.levelno == logging.WARN
+            if rec.name == SESSION_LOGGER_NAME and rec.levelno == logging.DEBUG
         ]
         assert actual_log_messages == expected_log_messages
 
